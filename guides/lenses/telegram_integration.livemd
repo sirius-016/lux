@@ -1,0 +1,322 @@
+# Telegram Integration Guide
+
+Welcome to the Lux Telegram Bot API Lens! This guide covers everything you need to know to build powerful Telegram bots with Lux.
+
+## Overview
+
+`Lux.Lenses.TelegramLens` provides a complete, type-safe interface to the Telegram Bot API. It handles:
+
+- **All core Bot API methods** (messages, media, chat management)
+- **Rate limiting** with token bucket queue (30 msg/sec global limit)
+- **Webhook & polling** update handlers
+- **Inline & custom keyboards**
+- **Error handling** with automatic retries
+- **Media uploads** (photos, documents, voice, video)
+
+## Setup
+
+### 1. Get Your Bot Token
+
+Start a chat with [@BotFather](https://t.me/botfather) on Telegram:
+
+1. Send `/newbot`
+2. Follow the prompts to name your bot
+3. Copy the token you receive
+
+### 2. Configure the Token
+
+**Option A: Environment variable**
+
+```bash
+export TELEGRAM_BOT_TOKEN="your_token_here"
+```
+
+**Option B: Elixir config**
+
+```elixir
+# config/config.exs
+config :lux, :telegram_token, "your_token_here"
+```
+
+## Quick Start
+
+### Send a Message
+
+```elixir
+alias Lux.Lenses.TelegramLens
+
+# Basic message
+{:ok, message} = TelegramLens.send_message(123_456_789, "Hello from Lux!")
+
+# With HTML formatting
+{:ok, message} = TelegramLens.send_message(123_456_789, "<b>Bold</b> and <i>italic</i>",
+  parse_mode: "HTML"
+)
+
+# Disable notification
+{:ok, message} = TelegramLens.send_message(123_456_789, "Silent message",
+  disable_notification: true
+)
+```
+
+### Send Media
+
+```elixir
+# Send a photo
+{:ok, message} = TelegramLens.send_photo(chat_id, "/path/to/photo.jpg",
+  caption: "A beautiful sunset"
+)
+
+# Send a document
+{:ok, message} = TelegramLens.send_document(chat_id, "/path/to/report.pdf")
+
+# Send voice message
+{:ok, message} = TelegramLens.send_voice(chat_id, "/path/to/audio.ogg",
+  duration: 30
+)
+
+# Send video
+{:ok, message} = TelegramLens.send_video(chat_id, "/path/to/video.mp4",
+  supports_streaming: true
+)
+```
+
+### Inline Keyboards
+
+```elixir
+alias Lux.Lenses.TelegramLens
+
+# Create inline keyboard
+keyboard = TelegramLens.inline_keyboard([
+  [
+    TelegramLens.button("Option A", "choice_a"),
+    TelegramLens.button("Option B", "choice_b")
+  ],
+  [
+    TelegramLens.button("Visit Website", nil, url: "https://example.com")
+  ]
+])
+
+# Send with keyboard
+{:ok, message} = TelegramLens.send_message(chat_id, "Choose an option:",
+  reply_markup: keyboard
+)
+```
+
+### Message Editing & Deletion
+
+```elixir
+# Edit a message
+{:ok, message} = TelegramLens.edit_message_text(chat_id, message_id, nil,
+  "Updated text here",
+  parse_mode: "HTML"
+)
+
+# Delete a message
+:ok = TelegramLens.delete_message(chat_id, message_id)
+```
+
+### Polls
+
+```elixir
+# Regular anonymous poll
+{:ok, message} = TelegramLens.send_poll(chat_id, "Favorite programming language?",
+  ["Elixir", "Rust", "Python", "Go"]
+)
+
+# Quiz with correct answer
+{:ok, message} = TelegramLens.send_poll(chat_id, "What is 2 + 2?",
+  ["3", "4", "5"],
+  type: "quiz",
+  correct_option_id: 1,
+  explanation: "Basic arithmetic!"
+)
+
+# Close a poll
+{:ok, poll} = TelegramLens.close_poll(chat_id, message_id)
+```
+
+## Receiving Updates
+
+### Option 1: Long Polling
+
+```elixir
+defmodule MyBot do
+  def handle_update(update) do
+    if message = update["message"] do
+      chat_id = message["chat"]["id"]
+      text = message["text"]
+
+      case text do
+        "/start" ->
+          TelegramLens.send_message(chat_id, "Welcome! Type /help for commands.")
+
+        "/help" ->
+          TelegramLens.send_message(chat_id, "Available commands: /start, /help")
+
+        _ ->
+          TelegramLens.send_message(chat_id, "You said: #{text}")
+      end
+    end
+
+    :acknowledge
+  end
+end
+
+# Start polling
+{:ok, pid} = Lux.Lenses.TelegramLens.Polling.start_link(
+  handler: {MyBot, :handle_update},
+  timeout: 30
+)
+```
+
+### Option 2: Webhook
+
+```elixir
+# In your Phoenix/Raxx endpoint:
+
+plug Lux.Lenses.TelegramLens.Webhook,
+  handler: {MyBot, :handle_update},
+  secret: System.get_env("TELEGRAM_WEBHOOK_SECRET")
+
+# Set the webhook
+:ok = TelegramLens.set_webhook("https://myapp.com/telegram/webhook",
+  max_connections: 40,
+  allowed_updates: ["message", "callback_query"]
+)
+```
+
+### Handling Callback Queries
+
+```elixir
+defmodule MyBot do
+  def handle_update(%{"callback_query" => query}) do
+    data = query["data"]
+    message = query["message"]
+
+    case data do
+      "choice_a" ->
+        TelegramLens.send_message(message["chat"]["id"], "You chose A!")
+
+      "choice_b" ->
+        TelegramLens.send_message(message["chat"]["id"], "You chose B!")
+    end
+
+    # Always answer callback queries to remove loading state
+    TelegramLens.answer_callback_query(query["id"])
+
+    :acknowledge
+  end
+end
+```
+
+## Rate Limiting
+
+Telegram limits bots to ~30 messages per second globally. Lux handles this automatically:
+
+- **Write operations** (sendMessage, sendPhoto, etc.) are rate-limited
+- **Read operations** (getMe, getChat, getUpdates) bypass the limiter
+- Requests are queued with a 35-second timeout
+- 429 errors are automatically retried after `retry_after`
+
+```elixir
+# Burst send messages (will queue automatically)
+for i <- 1..50 do
+  Task.async(fn ->
+    TelegramLens.send_message(chat_id, "Message #{i}")
+  end)
+end
+|> Task.await_many()
+```
+
+## Error Handling
+
+All functions return `{:ok, result}` or `{:error, reason}`:
+
+```elixir
+case TelegramLens.send_message(chat_id, text) do
+  {:ok, message} ->
+    IO.puts("Sent: #{message["message_id"]}")
+
+  {:error, {:telegram_error, code, desc}} ->
+    IO.puts("Telegram error #{code}: #{desc}")
+
+  {:error, :rate_limited} ->
+    IO.puts("Rate limited, try again later")
+
+  {:error, reason} ->
+    IO.puts("Network error: #{inspect(reason)}")
+end
+```
+
+## Type Reference
+
+### Keyboard Buttons
+
+```elixir
+# Callback button
+TelegramLens.button("Click me", "callback_data")
+
+# URL button
+TelegramLens.button("Visit", nil, url: "https://example.com")
+
+# Switch inline query
+TelegramLens.button("Search", nil, switch_inline_query: "query")
+```
+
+### Inline Keyboard
+
+```elixir
+keyboard = TelegramLens.inline_keyboard([
+  # Row 1
+  [
+    TelegramLens.button("A", "a"),
+    TelegramLens.button("B", "b")
+  ],
+  # Row 2
+  [
+    TelegramLens.button("Link", nil, url: "https://example.com")
+  ]
+])
+```
+
+## Testing
+
+```elixir
+# In your test file:
+use ExUnit.Case, async: true
+
+test "sends message" do
+  Req.Test.expect(Lux.Lens, fn conn ->
+    {:ok, body, _} = Plug.Conn.read_body(conn)
+    assert body["chat_id"] == 123
+    assert body["text"] == "Hello"
+    Plug.Conn.resp(conn, 200, ~s({"ok": true, "result": {"message_id": 1}}))
+  end)
+
+  assert {:ok, %{"message_id" => 1}} = TelegramLens.send_message(123, "Hello")
+end
+```
+
+## Performance
+
+The lens is designed for high throughput:
+
+- **Concurrent requests**: Use `Task.async_stream/3` for parallel sends
+- **Batched media**: Upload photos/documents in parallel, they each consume 1 token
+- **Webhook preferred**: For >1000 messages/hour, use webhooks (no polling overhead)
+- **Queue timeout**: 35 seconds max wait for rate limit tokens
+
+## Configuration Options
+
+```elixir
+# Rate limiter settings
+config :lux, :telegram_rate_limiter,
+  bucket_size: 30,
+  refill_rate: 30,
+  queue_timeout: 35_000
+
+# Webhook secret
+config :lux, :telegram,
+  webhook_secret: "your_secret"
+```
