@@ -1,0 +1,245 @@
+# Discord Core Prisms, Lenses and Beams
+
+## Overview
+
+This module provides comprehensive Discord server management through Lenses (read),
+Prisms (write), and Beams (workflows) in the Lux framework.
+
+## Setup
+
+Ensure your Discord bot token is configured:
+
+```elixir
+# config/runtime.exs
+config :lux, :api_keys, discord: System.get_env("DISCORD_BOT_TOKEN")
+```
+
+## Lenses (Reading Data)
+
+### Get Messages
+
+```elixir
+alias Lux.Lenses.Discord.GetMessages
+
+# Fetch latest messages from a channel
+{:ok, result} = GetMessages.focus(%{
+  "channel_id" => "1234567890",
+  "limit" => 25
+})
+
+IO.puts("Fetched \#{result.count} messages")
+```
+
+### Get Channel Info
+
+```elixir
+alias Lux.Lenses.Discord.GetChannel
+
+{:ok, channel} = GetChannel.focus(%{"channel_id" => "1234567890"})
+IO.puts("Channel: \#{channel.name} (NSFW: \#{channel.nsfw})")
+```
+
+### List All Channels
+
+```elixir
+alias Lux.Lenses.Discord.ListChannels
+
+{:ok, result} = ListChannels.focus(%{"guild_id" => "9876543210"})
+Enum.each(result.channels, &IO.puts("\#{&1.name} (\#{&1.type})"))
+```
+
+### Get Member Info
+
+```elixir
+alias Lux.Lenses.Discord.GetMember
+
+{:ok, member} = GetMember.focus(%{
+  "guild_id" => "9876543210",
+  "user_id" => "111222333"
+})
+```
+
+### List Bans
+
+```elixir
+alias Lux.Lenses.Discord.GetBans
+
+{:ok, bans} = GetBans.focus(%{"guild_id" => "9876543210"})
+```
+
+## Prisms (Actions)
+
+### Send Message
+
+```elixir
+alias Lux.Prisms.Discord.SendMessage
+
+{:ok, msg} = SendMessage.handler(%{
+  "channel_id" => "1234567890",
+  "content" => "Hello from Lux!",
+  "tts" => false
+}, %{})
+```
+
+### Edit Message
+
+```elixir
+alias Lux.Prisms.Discord.EditMessage
+
+{:ok, msg} = EditMessage.handler(%{
+  "channel_id" => "1234567890",
+  "message_id" => "msg123",
+  "content" => "Updated message"
+}, %{})
+```
+
+### Bulk Delete Messages
+
+```elixir
+alias Lux.Prisms.Discord.BulkDeleteMessages
+
+{:ok, result} = BulkDeleteMessages.handler(%{
+  "channel_id" => "1234567890",
+  "message_ids" => ["msg1", "msg2", "msg3"]
+}, %{})
+```
+
+### Create Channel
+
+```elixir
+alias Lux.Prisms.Discord.CreateChannel
+
+{:ok, channel} = CreateChannel.handler(%{
+  "guild_id" => "9876543210",
+  "name" => "new-channel",
+  "type" => 0,
+  "topic" => "A new text channel",
+  "parent_id" => "cat123"
+}, %{})
+```
+
+### Moderation
+
+```elixir
+alias Lux.Prisms.Discord.{BanMember, UnbanMember, TimeoutMember, KickMember}
+
+# Ban with reason
+{:ok, _} = BanMember.handler(%{
+  "guild_id" => "9876543210",
+  "user_id" => "bad_user_id",
+  "delete_message_days" => 1,
+  "reason" => "Spam"
+}, %{})
+
+# Timeout for 1 hour
+{:ok, _} = TimeoutMember.handler(%{
+  "guild_id" => "9876543210",
+  "user_id" => "user_id",
+  "duration_seconds" => 3600,
+  "reason" => "Inappropriate behavior"
+}, %{})
+
+# Kick
+{:ok, _} = KickMember.handler(%{
+  "guild_id" => "9876543210",
+  "user_id" => "user_id",
+  "reason" => "Rule violation"
+}, %{})
+```
+
+### Thread Management
+
+```elixir
+alias Lux.Prisms.Discord.CreateThread
+
+# Thread from a message
+{:ok, thread} = CreateThread.handler(%{
+  "channel_id" => "1234567890",
+  "message_id" => "msg123",
+  "name" => "Discussion Thread",
+  "auto_archive_duration" => 1440
+}, %{})
+```
+
+### Scheduled Events
+
+```elixir
+alias Lux.Prisms.Discord.{CreateScheduledEvent, CancelScheduledEvent}
+
+{:ok, event} = CreateScheduledEvent.handler(%{
+  "guild_id" => "9876543210",
+  "name" => "Weekly Standup",
+  "description" => "Team sync meeting",
+  "scheduled_start_time" => "2024-02-01T10:00:00Z",
+  "entity_type" => 2,
+  "channel_id" => "voice_channel_id"
+}, %{})
+```
+
+## Beams (Workflows)
+
+### Moderation Workflow
+
+```elixir
+alias Lux.Beams.Discord.ModerationWorkflow
+
+# High severity -> auto-ban
+{:ok, result} = ModerationWorkflow.run(%{
+  guild_id: "9876543210",
+  channel_id: "1234567890",
+  message_id: "bad_msg",
+  user_id: "bad_user",
+  reason: "Severe harassment",
+  severity: "high"
+})
+```
+
+### Channel Setup Workflow
+
+```elixir
+alias Lux.Beams.Discord.ChannelSetupWorkflow
+
+{:ok, result} = ChannelSetupWorkflow.run(%{
+  guild_id: "9876543210",
+  name: "announcements",
+  topic: "Important announcements only",
+  slowmode: 30,
+  parent_id: "cat123"
+})
+```
+
+## Architecture
+
+```
+Discord Integration
+├── Lux.Integrations.Discord (auth, headers, config)
+├── Lux.Integrations.Discord.Client (HTTP client)
+├── Lenses (Read)
+│   ├── GetMessages
+│   ├── GetChannel
+│   ├── GetGuild
+│   ├── GetMember
+│   ├── ListChannels
+│   └── GetBans
+├── Prisms (Write)
+│   ├── SendMessage, EditMessage, DeleteMessage, BulkDeleteMessages, AddReaction
+│   ├── CreateChannel, EditChannel, DeleteChannel
+│   ├── TimeoutMember, BanMember, UnbanMember, KickMember, AssignRole
+│   ├── CreateThread
+│   └── CreateScheduledEvent, CancelScheduledEvent
+└── Beams (Workflows)
+    ├── ModerationWorkflow
+    └── ChannelSetupWorkflow
+```
+
+## Rate Limits
+
+Discord API enforces rate limits. The client handles 429 responses automatically.
+For heavy operations, consider batching and respecting rate limit headers.
+
+## Error Handling
+
+All prisms return `{:ok, result}` or `{:error, reason}`. Common errors:
+- `:invalid_token` — Bot token is invalid or expired
+- `{status, message}` — Discord API error with status code
+- Timeout errors from the HTTP client
