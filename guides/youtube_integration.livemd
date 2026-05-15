@@ -1,0 +1,207 @@
+# YouTube Data API v3 Integration
+
+## Overview
+
+Complete YouTube Data API v3 integration for Lux: OAuth2 authentication,
+video management, live streaming, and real-time chat.
+
+## Setup
+
+```elixir
+# config/config.exs
+config :lux, :api_keys,
+  youtube_api_key: System.get_env("YOUTUBE_API_KEY"),
+  youtube_access_token: System.get_env("YOUTUBE_ACCESS_TOKEN"),
+  youtube_refresh_token: System.get_env("YOUTUBE_REFRESH_TOKEN"),
+  youtube_client_id: System.get_env("YOUTUBE_CLIENT_ID"),
+  youtube_client_secret: System.get_env("YOUTUBE_CLIENT_SECRET")
+```
+
+### OAuth2 Setup (for authenticated operations)
+
+1. Create a project in Google Cloud Console
+2. Enable YouTube Data API v3
+3. Create OAuth2 credentials (Web Application)
+4. Implement the OAuth2 flow using `RefreshOAuthToken` prism
+
+## Lenses (Reading Data)
+
+### List Videos
+
+```elixir
+alias Lux.Lenses.YouTube.{ListVideos, GetVideo, GetChannel, SearchVideos, ListBroadcasts}
+
+# List recent videos from a channel
+{:ok, result} = ListVideos.focus(%{"channel_id" => "UC...", "max_results" => 20, "order" => "date"})
+IO.puts("Found \#{result.total} videos")
+```
+
+### Get Single Video
+
+```elixir
+{:ok, video} = GetVideo.focus(%{"video_id" => "dQw4w9WgXcQ"})
+IO.puts("Title: \#{video.title}, Views: \#{video.view_count}")
+```
+
+### Search YouTube
+
+```elixir
+{:ok, result} = SearchVideos.focus(%{
+  "q" => "Elixir tutorial",
+  "type" => "video",
+  "order" => "viewCount",
+  "max_results" => 10
+})
+```
+
+### Get Channel Info
+
+```elixir
+{:ok, channel} = GetChannel.focus(%{"channel_id" => "UC..."})
+IO.puts("Subscriber count: \#{channel.subscriber_count}")
+```
+
+### Get Live Chat Messages
+
+```elixir
+{:ok, result} = Lux.Lenses.YouTube.GetLiveChat.focus(%{
+  "live_chat_id" => "live_chat_id_here",
+  "max_results" => 100
+})
+Enum.each(result.messages, &IO.puts("\#{&1.display_text}"))
+```
+
+### List Live Broadcasts
+
+```elixir
+{:ok, result} = ListBroadcasts.focus(%{"broadcast_status" => "upcoming"})
+```
+
+## Prisms (Actions)
+
+### Send Live Chat Message
+
+```elixir
+alias Lux.Prisms.YouTube.SendLiveChatMessage
+
+{:ok, msg} = SendLiveChatMessage.handler(%{
+  "live_chat_id" => "live_chat_id",
+  "text" => "Hello from Lux!"
+}, %{})
+```
+
+### Create Live Broadcast
+
+```elixir
+alias Lux.Prisms.YouTube.{CreateBroadcast, TransitionBroadcast, DeleteBroadcast}
+
+{:ok, broadcast} = CreateBroadcast.handler(%{
+  "title" => "My Live Stream",
+  "description" => "Stream description",
+  "scheduled_start_time" => "2024-02-01T18:00:00Z",
+  "privacy_status" => "public"
+}, %{})
+```
+
+### Transition Broadcast Status
+
+```elixir
+# Testing -> Live
+{:ok, result} = TransitionBroadcast.handler(%{
+  "broadcast_id" => broadcast.id,
+  "status" => "live"
+}, %{})
+
+# Live -> Complete
+{:ok, result} = TransitionBroadcast.handler(%{
+  "broadcast_id" => broadcast.id,
+  "status" => "complete"
+}, %{})
+```
+
+### Create Stream Configuration
+
+```elixir
+alias Lux.Prisms.YouTube.{CreateStream, BindBroadcast}
+
+{:ok, stream} = CreateStream.handler(%{
+  "title" => "My Stream Config",
+  "description" => "Stream for OBS"
+}, %{})
+
+# Get the stream key for OBS configuration
+IO.puts("Stream key: \#{stream.stream_key}")
+```
+
+### Bind Broadcast to Stream
+
+```elixir
+{:ok, bound} = BindBroadcast.handler(%{
+  "broadcast_id" => broadcast.id,
+  "stream_id" => stream.id
+}, %{})
+```
+
+## Beams (Workflows)
+
+### Auto-Live Workflow
+
+```elixir
+alias Lux.Beams.YouTube.AutoLiveWorkflow
+
+{:ok, result} = AutoLiveWorkflow.run(%{
+  title: "Weekly Stream",
+  description: "Our weekly live show",
+  scheduled_start_time: "2024-02-01T18:00:00Z"
+})
+
+IO.puts("Stream key for OBS: \#{result.stream_key}")
+```
+
+This workflow automatically:
+1. Creates a stream configuration
+2. Creates the broadcast
+3. Binds them together
+4. Transitions to testing mode
+
+## Architecture
+
+```
+YouTube Integration
+├── Lux.Integrations.YouTube (auth, headers)
+├── Lux.Integrations.YouTube.Client (HTTP client with API key + OAuth2)
+├── Lenses
+│   ├── ListVideos - channel video listings
+│   ├── GetVideo - single video details
+│   ├── SearchVideos - search results
+│   ├── GetChannel - channel info
+│   ├── GetLiveChat - live chat messages
+│   └── ListBroadcasts - live broadcasts
+├── Prisms
+│   ├── SendLiveChatMessage - send live chat
+│   ├── CreateBroadcast / DeleteBroadcast
+│   ├── TransitionBroadcast (testing/live/complete)
+│   ├── CreateStream - stream config
+│   ├── BindBroadcast - bind stream to broadcast
+│   └── RefreshOAuthToken - OAuth2 refresh
+└── Beams
+    └── AutoLiveWorkflow - one-step live stream setup
+```
+
+## Rate Limits
+
+- YouTube Data API v3: 10,000 units/day (default quota)
+- Videos.list: 1 unit per request
+- Search.list: 100 units per request
+- Most writes: 50 units per request
+- Query the quota using `GET /channels` with `auditDetails` part
+
+## Error Codes
+
+| Code | Meaning |
+|------|---------|
+| `keyInvalid` | Invalid API key |
+| `accessNotConfigured` | API not enabled |
+| `quotaExceeded` | Daily quota exceeded |
+| `liveChatEnded` | Live chat session ended |
+| `liveStreamNotEnabled` | Channel not enabled for live |
