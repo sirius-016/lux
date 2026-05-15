@@ -1,0 +1,153 @@
+# LLM Provider Abstraction Layer
+
+## Overview
+
+The LLM Provider Abstraction Layer provides a unified interface for interacting
+with multiple LLM providers (OpenAI, Anthropic, TogetherAI, Mira) through a
+single API with automatic routing, fallback, caching, and cost tracking.
+
+## Setup
+
+Start the abstraction layer:
+
+```elixir
+Lux.LLM.Manager.start_link()
+```
+
+## Basic Usage
+
+### Simple Chat
+
+```elixir
+{:ok, response} = Lux.LLM.chat("What is Elixir?", [])
+IO.puts(response.content)
+```
+
+### With Tools
+
+```elixir
+tools = [my_prism, my_lens]
+{:ok, response} = Lux.LLM.chat("Analyze this data", tools)
+```
+
+### Specific Provider
+
+```elixir
+{:ok, response} = Lux.LLM.chat("Hello", [], provider: Lux.LLM.Anthropic)
+```
+
+## Routing Strategies
+
+```elixir
+# Route by cost (cheapest model)
+{:ok, response} = Lux.LLM.chat("Simple question", [], strategy: :cost)
+
+# Route by latency (fastest provider)
+{:ok, response} = Lux.LLM.chat("Quick response needed", [], strategy: :latency)
+
+# Route by quality (best model)
+{:ok, response} = Lux.LLM.chat("Complex analysis", [], strategy: :quality)
+
+# Round-robin
+{:ok, response} = Lux.LLM.chat("Balance load", [], strategy: :round_robin)
+
+# Fallback chain
+{:ok, response} = Lux.LLM.chat("Must succeed", [], strategy: :fallback,
+  chain: [Lux.LLM.OpenAI, Lux.LLM.Anthropic, Lux.LLM.TogetherAI])
+```
+
+## Caching
+
+```elixir
+# Enable caching
+{:ok, response} = Lux.LLM.chat("Frequently asked question", [], cache: true)
+
+# Custom TTL (60 seconds)
+{:ok, response} = Lux.LLM.chat("Cached question", [],
+  cache: true, cache_ttl_ms: 60_000)
+
+# Check cache stats
+Lux.LLM.cache_stats()
+# => %{size: 5, hits: 20, misses: 3, hit_rate: 0.87}
+```
+
+## Cost Tracking
+
+```elixir
+# Get total cost
+Lux.LLM.total_cost()
+# => 0.0452
+
+# Get usage report per provider
+Lux.LLM.usage_report()
+# => [
+#   %{provider: Lux.LLM.OpenAI, request_count: 15, total_cost: 0.032, ...},
+#   %{provider: Lux.LLM.Anthropic, request_count: 5, total_cost: 0.013, ...}
+# ]
+```
+
+## Circuit Breaker
+
+```elixir
+# Check if a provider is healthy
+Lux.LLM.Fallback.circuit_open?(Lux.LLM.OpenAI)
+# => false
+
+# Get health score (0.0 - 1.0)
+Lux.LLM.Fallback.health_score(Lux.LLM.OpenAI)
+# => 1.0
+
+# Reset a circuit breaker
+Lux.LLM.Fallback.reset_circuit(Lux.LLM.OpenAI)
+```
+
+## Provider Registry
+
+```elixir
+# List all providers
+Lux.LLM.Registry.list_providers()
+# => [Lux.LLM.OpenAI, Lux.LLM.Anthropic, Lux.LLM.TogetherAI, Lux.LLM.Mira]
+
+# Get default provider
+Lux.LLM.Registry.get_default()
+# => Lux.LLM.OpenAI
+
+# Set default
+Lux.LLM.Registry.set_default(Lux.LLM.Anthropic)
+
+# Find cheapest model meeting requirements
+Lux.LLM.Registry.find_model(
+  Lux.LLM.Registry.list_providers(),
+  capabilities: [:tools],
+  min_context: 32_000
+)
+```
+
+## Configuration
+
+```elixir
+Lux.LLM.Manager.configure(
+  default_provider: Lux.LLM.Anthropic,
+  routing_strategy: :quality,
+  fallback_chain: [Lux.LLM.Anthropic, Lux.LLM.OpenAI, Lux.LLM.TogetherAI],
+  cache_max_size: 2000
+)
+```
+
+## Architecture
+
+```
+Lux.LLM.chat/3
+    |
+    v
+Lux.LLM.Manager (orchestration)
+    |-- Lux.LLM.Router (provider selection)
+    |-- Lux.LLM.Fallback (circuit breaker + retry)
+    |-- Lux.LLM.Cache (ETS LRU cache)
+    |-- Lux.LLM.Monitoring (cost + perf tracking)
+    |-- Lux.LLM.Registry (provider registry)
+    |-- Lux.LLM.Provider (behaviour + helpers)
+    |
+    v
+Provider.call/3 (OpenAI, Anthropic, TogetherAI, Mira)
+```
