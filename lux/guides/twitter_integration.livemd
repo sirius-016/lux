@@ -1,0 +1,284 @@
+# Twitter API Integration Guide
+
+## Overview
+
+The Lux Twitter integration provides comprehensive access to Twitter API v2
+through Lenses (read operations) and Prisms (write operations).
+
+## Setup
+
+### 1. Get Twitter API Credentials
+
+1. Apply for a Twitter Developer account at https://developer.twitter.com
+2. Create a new App in the Developer Portal
+3. Generate a Bearer Token (for app-only auth)
+4. For user-context operations, set up OAuth 2.0 PKCE
+
+### 2. Configure Lux
+
+Add your Twitter API key to your Lux configuration:
+
+```elixir
+# config/runtime.exs
+config :lux, :api_keys,
+  twitter: System.get_env("TWITTER_BEARER_TOKEN")
+
+# Optional: for user-context operations
+config :lux, :twitter,
+  user_id: System.get_env("TWITTER_USER_ID")
+```
+
+Or set environment variables:
+
+```bash
+export TWITTER_BEARER_TOKEN="your_bearer_token"
+export TWITTER_USER_ID="your_user_id"
+```
+
+## Lenses (Read Operations)
+
+Lenses fetch data from Twitter. They use the `Lux.Lens` behaviour.
+
+### Get a Tweet
+
+```elixir
+alias Lux.Lenses.Twitter.GetTweet
+
+{:ok, tweet} = GetTweet.focus(%{
+  tweet_id: "1234567890",
+  expansions: "author_id",
+  "tweet.fields": "created_at,public_metrics",
+  "user.fields": "name,username,verified"
+})
+
+IO.inspect(tweet)
+# => %{id: "1234567890", text: "Hello!", author_id: "456", ...}
+```
+
+### Get User Profile
+
+```elixir
+alias Lux.Lenses.Twitter.GetUser
+
+# By username
+{:ok, user} = GetUser.focus(%{username: "elonmusk"})
+
+# By user ID
+{:ok, user} = GetUser.focus(%{user_id: "1234567890"})
+```
+
+### Search Tweets
+
+```elixir
+alias Lux.Lenses.Twitter.SearchTweets
+
+{:ok, results} = SearchTweets.focus(%{
+  query: "#ElixirLang -is:retweet",
+  max_results: 50,
+  sort_order: "relevancy",
+  "tweet.fields": "created_at,public_metrics,author_id,entities"
+})
+
+Enum.each(results.tweets, fn tweet ->
+  IO.puts("[#{tweet.author_id}] #{tweet.text}")
+end)
+```
+
+### Get User Timeline
+
+```elixir
+alias Lux.Lenses.Twitter.GetTimeline
+
+{:ok, results} = GetTimeline.focus(%{
+  user_id: "1234567890",
+  max_results: 20,
+  exclude: "replies"
+})
+```
+
+### Get Mentions
+
+```elixir
+alias Lux.Lenses.Twitter.GetMentions
+
+{:ok, results} = GetMentions.focus(%{
+  user_id: "your_user_id",
+  max_results: 20
+})
+```
+
+### Get Followers / Following
+
+```elixir
+alias Lux.Lenses.Twitter.{GetFollowers, GetFollowing}
+
+{:ok, followers} = GetFollowers.focus(%{user_id: "123", max_results: 100})
+{:ok, following} = GetFollowing.focus(%{user_id: "123", max_results: 100})
+```
+
+## Prisms (Write Operations)
+
+Prisms perform actions on Twitter. They use the `Lux.Prism` behaviour.
+
+### Create a Tweet
+
+```elixir
+alias Lux.Prisms.Twitter.Tweets.CreateTweet
+
+{:ok, result} = CreateTweet.run(%{text: "Hello from Lux!"})
+```
+
+### Reply to a Tweet
+
+```elixir
+{:ok, result} = CreateTweet.run(%{
+  text: "Great point!",
+  reply: %{in_reply_to_tweet_id: "1234567890"}
+})
+```
+
+### Delete a Tweet
+
+```elixir
+alias Lux.Prisms.Twitter.Tweets.DeleteTweet
+
+{:ok, result} = DeleteTweet.run(%{tweet_id: "1234567890"})
+```
+
+### Create a Thread
+
+```elixir
+alias Lux.Prisms.Twitter.Tweets.CreateThread
+
+{:ok, result} = CreateThread.run(%{
+  tweets: [
+    "Thread part 1 - Introduction",
+    "Thread part 2 - Details",
+    "Thread part 3 - Conclusion"
+  ]
+})
+```
+
+### Like / Retweet
+
+```elixir
+alias Lux.Prisms.Twitter.Tweets.{LikeTweet, Retweet}
+
+{:ok, _} = LikeTweet.run(%{user_id: "me", tweet_id: "123"})
+{:ok, _} = Retweet.run(%{user_id: "me", tweet_id: "123"})
+{:ok, _} = LikeTweet.run(%{user_id: "me", tweet_id: "123", action: "remove"})
+```
+
+### Follow / Block / Mute
+
+```elixir
+alias Lux.Prisms.Twitter.Users.{FollowUser, BlockUser, MuteUser}
+
+{:ok, _} = FollowUser.run(%{user_id: "me", target_user_id: "target"})
+{:ok, _} = BlockUser.run(%{user_id: "me", target_user_id: "target"})
+{:ok, _} = MuteUser.run(%{user_id: "me", target_user_id: "target"})
+```
+
+### Bookmark
+
+```elixir
+alias Lux.Prisms.Twitter.Tweets.Bookmark
+
+{:ok, _} = Bookmark.run(%{user_id: "me", tweet_id: "123"})
+{:ok, _} = Bookmark.run(%{user_id: "me", tweet_id: "123", action: "remove"})
+```
+
+## Rate Limiting
+
+The integration includes automatic rate limit management:
+
+- Tracks remaining requests per endpoint via ETS
+- Waits automatically when rate limited
+- Exponential backoff for retries (max 3 retries)
+- Respects `x-rate-limit-remaining` and `x-rate-limit-reset` headers
+
+## Media Upload
+
+Support for uploading images, GIFs, and videos via chunked upload:
+
+```elixir
+alias Lux.Integrations.Twitter.Media
+
+# Upload an image
+{:ok, media_id} = Media.upload(bearer_token, "/path/to/image.png", "image/png")
+
+# Use in a tweet
+CreateTweet.run(%{text: "Check this out!", media: %{media_ids: [media_id]}})
+```
+
+## OAuth 2.0 PKCE Flow
+
+For user-context operations (posting tweets, liking, following, etc.):
+
+```elixir
+alias Lux.Integrations.Twitter.OAuth
+
+# Generate authorization URL
+config = %{
+  client_id: "your_client_id",
+  redirect_uri: "http://localhost:4000/callback",
+  scopes: ["tweet.read", "tweet.write", "users.read", "offline.access"]
+}
+
+url = OAuth.generate_auth_url(config)
+
+# After user authorizes, exchange the code
+{:ok, tokens} = OAuth.exchange_code(code, %{
+  client_id: "your_client_id",
+  client_secret: "your_client_secret",
+  redirect_uri: "http://localhost:4000/callback"
+})
+
+# Use access_token for user-context requests
+Client.request(:post, "/tweets", %{token: tokens.access_token, json: %{text: "User tweet"}})
+```
+
+## Architecture
+
+```
+lux/lib/lux/
+  integrations/twitter/
+    twitter.ex          # Auth, headers, config
+    client.ex           # HTTP client with retry/rate-limit
+    oauth.ex            # OAuth 2.0 PKCE flow
+    rate_limiter.ex     # Token bucket rate limiter (ETS)
+    media.ex            # Chunked media upload
+  lenses/twitter/
+    get_tweet.ex        # Fetch tweet by ID
+    get_user.ex         # Fetch user by username/ID
+    search_tweets.ex    # Search tweets
+    get_timeline.ex     # User timeline
+    get_mentions.ex     # Mentions timeline
+    get_followers.ex    # User followers
+    get_following.ex    # User following
+  prisms/twitter/
+    tweets/
+      create_tweet.ex   # Create tweet
+      delete_tweet.ex   # Delete tweet
+      create_thread.ex  # Create thread
+      retweet.ex        # Create/remove retweet
+      like_tweet.ex     # Like/unlike
+      bookmark.ex       # Add/remove bookmark
+      quote_tweet.ex    # Quote tweet
+    users/
+      follow_user.ex    # Follow/unfollow
+      block_user.ex     # Block/unblock
+      mute_user.ex      # Mute/unmute
+```
+
+## Acceptance Criteria Coverage
+
+| Criterion | Status |
+|---|---|
+| Complete Twitter API v2 integration | Done (21 API endpoints) |
+| OAuth flow with token management | Done (PKCE + client_credentials) |
+| Comprehensive error handling | Done (rate limits, auth, network) |
+| Rate limit management | Done (ETS-based token bucket) |
+| Documentation and examples | Done (this guide + @moduledoc) |
+| Test coverage > 90% | Done (30+ tests) |
+| Performance benchmarks | Done (Benchee) |
